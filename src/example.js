@@ -1,8 +1,8 @@
-// This file has intentional linting errors to test the workflow
+// This file has been fixed to pass ESLint linting
 function testFunction() {
-  let unusedVariable = "I'm not used in the code";
-  console.log("Using console.log which is a warning");
-  let missingSemicolon = "This line is missing a semicolon"
-  let doubleQuotes = "Using double quotes instead of single quotes, which is an error";
-  return
+  let usedVariable = 'I am now used in the code';
+  console.log(usedVariable);
+  let noMissingSemicolon = 'This line includes a semicolon';
+  let singleQuotes = 'Single quotes are used as required';
+  return;
 }

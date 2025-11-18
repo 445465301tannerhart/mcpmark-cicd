@@ -1,0 +1,168 @@
+name: PR Automation Workflow
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run ESLint
+        run: npm run lint > eslint-results.txt 2>&1
+        continue-on-error: true
+      - name: Run Prettier
+        run: npx prettier --check . > prettier-results.txt 2>&1
+        continue-on-error: true
+      - name: Post Code Quality Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const eslintResults = fs.readFileSync('eslint-results.txt', 'utf8');
+            const prettierResults = fs.readFileSync('prettier-results.txt', 'utf8');
+            const comment = `## Code Quality Report\n\n### ESLint Results:\n\`\`\`\n${eslintResults}\n\`\`\`\n\n### Prettier Results:\n\`\`\`\n${prettierResults}\n\`\`\``;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+
+  testing-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run Tests with Coverage
+        run: npm test -- --coverage > test-coverage.txt 2>&1
+        continue-on-error: true
+      - name: Post Test Coverage Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const coverageResults = fs.readFileSync('test-coverage.txt', 'utf8');
+            const comment = `## Test Coverage Report\n\n\`\`\`\n${coverageResults}\n\`\`\``;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+      - name: Upload Coverage Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run Dependency Vulnerability Check
+        run: npm audit --json > npm-audit-results.json 2>&1
+        continue-on-error: true
+      - name: Scan for Secrets
+        uses: trufflesecurity/trufflehog@v3.61.0
+        with:
+          path: ./
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          output: trufflehog-results.txt
+        continue-on-error: true
+      - name: Post Security Scan Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let npmAuditResults = 'No vulnerabilities found.';
+            if (fs.existsSync('npm-audit-results.json')) {
+              try {
+                const auditData = JSON.parse(fs.readFileSync('npm-audit-results.json', 'utf8'));
+                npmAuditResults = `Found ${auditData.metadata.vulnerabilities.total} vulnerabilities:\n${JSON.stringify(auditData.advisories, null, 2)}`;
+              } catch (e) {
+                npmAuditResults = 'Error parsing npm audit results.';
+              }
+            }
+            const trufflehogResults = fs.existsSync('trufflehog-results.txt') ? fs.readFileSync('trufflehog-results.txt', 'utf8') : 'No secrets found.';
+            const comment = `## Security Scan Report\n\n### Dependencies:\n\`\`\`\n${npmAuditResults}\n\`\`\`\n\n### Secrets Scan:\n\`\`\`\n${trufflehogResults}\n\`\`\``;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+
+  build-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Application
+        run: npm run build > build-results.txt 2>&1
+        continue-on-error: true
+      - name: Validate Endpoints
+        run: |
+          # Start the application in the background
+          npm start &
+          # Wait for the server to start
+          sleep 10
+          # Check health endpoint
+          curl -I http://localhost:3000/health > endpoint-validation.txt 2>&1
+          # Stop the application
+          pkill -f "npm start"
+        continue-on-error: true
+      - name: Create Deployment Preview Artifacts
+        run: |
+          zip -r deployment-preview.zip build/
+        continue-on-error: true
+      - name: Post Build Validation
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const buildResults = fs.readFileSync('build-results.txt', 'utf8');
+            const endpointResults = fs.existsSync('endpoint-validation.txt') ? fs.readFileSync('endpoint-validation.txt', 'utf8') : 'Endpoint validation skipped.';
+            const comment = `## Build Validation\n\n### Build Results:\n\`\`\`\n${buildResults}\n\`\`\`\n\n### Endpoint Validation:\n\`\`\`\n${endpointResults}\n\`\`\``;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+      - name: Upload Deployment Preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-preview
+          path: deployment-preview.zip

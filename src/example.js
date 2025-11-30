@@ -1,3 +1,2 @@
-console.log("Hello, this uses double quotes and no semicolon")
-let unusedVariable = 10
-const anotherStr = "more double quotes"
+console.log('Hello, this uses single quotes and has semicolons');
+const anotherStr = 'single quotes here too';
